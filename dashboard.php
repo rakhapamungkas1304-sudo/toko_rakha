@@ -47,40 +47,45 @@ if ($page === 'produk') {
     }
 
     if (isset($_POST['tambah'])) {
-        $nama_produk = $_POST['nama'];
-        $harga = $_POST['harga'];
-        $stok = $_POST['stok'];
-        $kategori = $_POST['kategori'];
-        $deskripsi = $_POST['deskripsi'];
-        $poto = $_FILES['foto']['name'];
+        $nama_produk = trim($_POST['nama'] ?? '');
+        $harga       = (int) ($_POST['harga'] ?? 0);
+        $stok        = (int) ($_POST['stok'] ?? 0);
+        $kategori    = (int) ($_POST['kategori'] ?? 0);
+        $deskripsi   = $_POST['deskripsi'] ?? '';
+        $poto        = $_FILES['foto']['name'] ?? '';
 
-        if ($aksi == 'edit') {
-            if (!empty($poto)) {
-                $path = "assets/img/" . $poto;
-                $file_tmp = $_FILES['foto']['tmp_name'];
-                move_uploaded_file($file_tmp, $path);
+        try {
+            if ($aksi == 'edit') {
+                if (!empty($poto)) {
+                    move_uploaded_file($_FILES['foto']['tmp_name'], "assets/img/" . $poto);
+                } else {
+                    $poto = $_POST['foto_lama'] ?? '';
+                }
+
+                $stmt = mysqli_prepare($koneksi, "UPDATE tb_produk SET nama=?, harga=?, stok=?, id_kategori=?, deskripsi=?, foto=? WHERE id=?");
+                mysqli_stmt_bind_param($stmt, "siiissi", $nama_produk, $harga, $stok, $kategori, $deskripsi, $poto, $id);
+                mysqli_stmt_execute($stmt);
+                $_SESSION['flash_sweetalert'] = ['icon' => 'success', 'title' => 'Produk diperbarui', 'text' => 'Perubahan produk berhasil disimpan.'];
             } else {
-                $poto = $_POST['foto_lama'];
+                if (!empty($poto)) {
+                    move_uploaded_file($_FILES['foto']['tmp_name'], "assets/img/" . $poto);
+                }
+
+                $stmt = mysqli_prepare($koneksi, "INSERT INTO tb_produk (nama, harga, stok, id_kategori, deskripsi, foto) VALUES (?, ?, ?, ?, ?, ?)");
+                mysqli_stmt_bind_param($stmt, "siiiss", $nama_produk, $harga, $stok, $kategori, $deskripsi, $poto);
+                mysqli_stmt_execute($stmt);
+                $_SESSION['flash_sweetalert'] = ['icon' => 'success', 'title' => 'Produk ditambahkan', 'text' => 'Produk baru berhasil ditambahkan.'];
             }
-
-            $simpan = mysqli_query($koneksi, "UPDATE tb_produk SET nama='$nama_produk', harga='$harga', stok='$stok', id_kategori='$kategori', deskripsi='$deskripsi', foto='$poto' WHERE id='$id'");
-            $_SESSION['flash_sweetalert'] = $simpan
-                ? ['icon' => 'success', 'title' => 'Produk diperbarui', 'text' => 'Perubahan produk berhasil disimpan.']
-                : ['icon' => 'error', 'title' => 'Gagal memperbarui produk', 'text' => 'Perubahan produk tidak berhasil disimpan.'];
-            header("Location: dashboard.php?page=produk");
-            exit;
-        } else {
-            $path = "assets/img/" . $poto;
-            $file_tmp = $_FILES['foto']['tmp_name'];
-            move_uploaded_file($file_tmp, $path);
-            $simpan = mysqli_query($koneksi, "INSERT INTO tb_produk (nama, harga, stok, id_kategori, deskripsi, foto) VALUES ('$nama_produk', '$harga', '$stok','$kategori','$deskripsi', '$poto')");
-
-            $_SESSION['flash_sweetalert'] = $simpan
-                ? ['icon' => 'success', 'title' => 'Produk ditambahkan', 'text' => 'Produk baru berhasil ditambahkan.']
-                : ['icon' => 'error', 'title' => 'Gagal menambahkan produk', 'text' => 'Produk baru tidak berhasil disimpan.'];
-            header("Location: dashboard.php?page=produk");
-            exit;
+        } catch (mysqli_sql_exception $e) {
+            // Tampilkan alasan asli dari database (mis. pesan dari trigger)
+            $_SESSION['flash_sweetalert'] = [
+                'icon'  => 'error',
+                'title' => ($aksi == 'edit') ? 'Gagal memperbarui produk' : 'Gagal menambahkan produk',
+                'text'  => $e->getMessage()
+            ];
         }
+        header("Location: dashboard.php?page=produk");
+        exit;
     }
 }
 
@@ -519,20 +524,20 @@ if ($page === 'pelanggan' && $aksi == 'hapus') {
                             WHERE td.id_transaksi = '$id_transaksi'
                           ");
 
-                          // Ambil metode pembayaran/pengiriman jika kolomnya sudah ada
-                          $payment_method  = $data['payment_method']  ?? null;
-                          $shipping_method = $data['shipping_method'] ?? null;
-                          $biaya_kirim     = $data['biaya_pengiriman'] ?? 0;
+                          // Info pembayaran & rincian biaya (NULL untuk transaksi lama)
+                          $payment_method  = $data['metode_pembayaran'] ?? null;
+                          $shipping_method = $data['metode_pengiriman'] ?? null;
+                          $biaya_kirim     = isset($data['biaya_kirim']) ? (int) $data['biaya_kirim'] : null;
+                          $diskon_trx      = isset($data['diskon']) ? (int) $data['diskon'] : null;
 
                           $labelPayment = [
-                            'transfer_bank'    => 'Transfer Bank',
-                            'e_wallet'         => 'E-Wallet',
-                            'cash_on_delivery' => 'Cash On Delivery (COD)',
+                            'Transfer Bank' => 'Transfer Bank (BCA / Mandiri / BNI)',
+                            'E-Wallet'      => 'E-Wallet (Dana / OVO / GoPay)',
+                            'COD'           => 'Bayar di Tempat (COD)',
                           ];
                           $labelShipping = [
-                            'regular'  => 'Regular (2-5 Hari)',
-                            'express'  => 'Express (1-2 Hari)',
-                            'same_day' => 'Same Day',
+                            'Reguler' => 'Kurir Reguler (2-3 Hari)',
+                            'Express' => 'Kurir Express (1 Hari)',
                           ];
                     ?>
                         <tr>
@@ -578,8 +583,8 @@ if ($page === 'pelanggan' && $aksi == 'hapus') {
                                     <h6 class="fw-bold text-muted mb-2">INFORMASI INVOICE</h6>
                                     <p class="mb-1">No. Invoice: <strong>INV-<?= str_pad($id_transaksi, 5, '0', STR_PAD_LEFT) ?></strong></p>
                                     <p class="mb-1">Tanggal: <strong><?= date('d M Y H:i', strtotime($data['tanggal'])) ?></strong></p>
-                                    <p class="mb-1">Pembayaran: <strong><?= $labelPayment[$payment_method] ?? '-' ?></strong></p>
-                                    <p class="mb-0">Pengiriman: <strong><?= $labelShipping[$shipping_method] ?? '-' ?></strong></p>
+                                    <p class="mb-1">Pembayaran: <strong><?= htmlspecialchars($labelPayment[$payment_method] ?? ($payment_method ?: '-')) ?></strong></p>
+                                    <p class="mb-0">Pengiriman: <strong><?= htmlspecialchars($labelShipping[$shipping_method] ?? ($shipping_method ?: '-')) ?></strong></p>
                                   </div>
                                 </div>
 
@@ -618,11 +623,17 @@ if ($page === 'pelanggan' && $aksi == 'hapus') {
                                   <div class="col-md-6">
                                     <div class="d-flex justify-content-between mb-1">
                                       <span class="text-muted">Subtotal Produk</span>
-                                      <span>Rp <?= number_format($subtotalProduk, 0, ',', '.') ?></span>
+                                      <span>Rp <?= number_format(($biaya_kirim !== null && $diskon_trx !== null) ? ($data['total_harga'] + $diskon_trx - $biaya_kirim) : $subtotalProduk, 0, ',', '.') ?></span>
                                     </div>
+                                    <?php if ($diskon_trx !== null && $diskon_trx > 0): ?>
+                                    <div class="d-flex justify-content-between mb-1 text-success">
+                                      <span>Diskon</span>
+                                      <span>- Rp <?= number_format($diskon_trx, 0, ',', '.') ?></span>
+                                    </div>
+                                    <?php endif; ?>
                                     <div class="d-flex justify-content-between mb-1">
                                       <span class="text-muted">Biaya Pengiriman</span>
-                                      <span>Rp <?= number_format($biaya_kirim, 0, ',', '.') ?></span>
+                                      <span><?= $biaya_kirim !== null ? 'Rp ' . number_format($biaya_kirim, 0, ',', '.') : '-' ?></span>
                                     </div>
                                     <hr class="my-2">
                                     <div class="d-flex justify-content-between fs-5">
@@ -757,6 +768,8 @@ if ($page === 'pelanggan' && $aksi == 'hapus') {
           return;
         }
         event.preventDefault();
+        // Simpan tombol yang diklik; tanpa ini name="tambah" tidak ikut terkirim ke PHP
+        const tombol = event.submitter;
         Swal.fire({
           icon: 'question',
           title: form.dataset.swalTitle,
@@ -769,7 +782,7 @@ if ($page === 'pelanggan' && $aksi == 'hapus') {
         }).then((result) => {
           if (result.isConfirmed) {
             form.dataset.confirmed = 'true';
-            form.requestSubmit();
+            form.requestSubmit(tombol);
           }
         });
       });
