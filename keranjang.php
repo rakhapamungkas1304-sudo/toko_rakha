@@ -20,6 +20,10 @@ const ATURAN_DISKON = [
     100000 => 5,    // belanja >= Rp 100.000 -> diskon 5%
 ];
 
+// Biaya kirim per kurir & metode bayar yang diizinkan (dipakai server DAN tampilan)
+const BIAYA_KIRIM  = ['Reguler' => 15000, 'Express' => 25000];
+const METODE_BAYAR = ['Transfer Bank', 'E-Wallet', 'COD'];
+
 function hitungPersenDiskon(int $subtotal): int {
     foreach (ATURAN_DISKON as $minimal => $persen) {   // urut dari terbesar
         if ($subtotal >= $minimal) return $persen;
@@ -96,7 +100,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Ambil pilihan metode pembayaran dan pengiriman
             $metode_bayar = trim($_POST['metode_bayar'] ?? 'Transfer Bank');
             $metode_kirim = trim($_POST['metode_kirim'] ?? 'Reguler');
-            $biaya_kirim  = ($metode_kirim === 'Express') ? 25000 : 15000;
+            if (!in_array($metode_bayar, METODE_BAYAR, true)) $metode_bayar = 'Transfer Bank';
+            if (!isset(BIAYA_KIRIM[$metode_kirim])) $metode_kirim = 'Reguler';
+            $biaya_kirim  = BIAYA_KIRIM[$metode_kirim];
 
             // Hitung ulang subtotal produk dari database
             $subtotal_produk = 0;
@@ -126,12 +132,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // 1. Simpan ke tb_transaksi (pastikan tabel Anda sudah mendukung kolom metode_pembayaran, metode_pengiriman, biaya_kirim jika diperlukan, atau sesuaikan)
                 // Jika struktur tabel belum ada kolom tersebut, kita masukkan ke total_harga saja atau simpan standar
-                $stmt = mysqli_prepare(
-                    $koneksi,
-                    "INSERT INTO tb_transaksi (id_pelanggan, tanggal, total_harga) VALUES (?, ?, ?)"
-                );
-                mysqli_stmt_bind_param($stmt, "isi", $id_pelanggan, $tanggal, $total_akhir);
-                mysqli_stmt_execute($stmt);
+                try {
+                    $stmt = mysqli_prepare(
+                        $koneksi,
+                        "INSERT INTO tb_transaksi (id_pelanggan, tanggal, total_harga, metode_pembayaran, metode_pengiriman, biaya_kirim, diskon)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)"
+                    );
+                    mysqli_stmt_bind_param($stmt, "isissii", $id_pelanggan, $tanggal, $total_akhir, $metode_bayar, $metode_kirim, $biaya_kirim, $nominal_diskon);
+                    mysqli_stmt_execute($stmt);
+                } catch (mysqli_sql_exception $e) {
+                    // Kolom belum ada (jalankan UPDATE_TRANSAKSI_PEMBAYARAN.sql) -> simpan cara lama
+                    if ($e->getCode() !== 1054) throw $e;
+                    $stmt = mysqli_prepare(
+                        $koneksi,
+                        "INSERT INTO tb_transaksi (id_pelanggan, tanggal, total_harga) VALUES (?, ?, ?)"
+                    );
+                    mysqli_stmt_bind_param($stmt, "isi", $id_pelanggan, $tanggal, $total_akhir);
+                    mysqli_stmt_execute($stmt);
+                }
                 $id_transaksi = mysqli_insert_id($koneksi);
 
                 // 2. Simpan tiap produk ke tb_detail + kurangi stok
@@ -194,6 +212,13 @@ foreach ($_SESSION['keranjang'] as $id_produk => $jml) {
 $persenDiskon  = hitungPersenDiskon((int) $totalHarga);
 $nominalDiskon = (int) round($totalHarga * $persenDiskon / 100);
 $infoBerikutnya = diskonBerikutnya((int) $totalHarga);
+
+// Pilihan kurir/pembayaran yang sedang dipilih (default: pilihan pertama)
+$kirimTerpilih  = $_POST['metode_kirim'] ?? 'Reguler';
+if (!isset(BIAYA_KIRIM[$kirimTerpilih])) $kirimTerpilih = 'Reguler';
+$bayarTerpilih  = $_POST['metode_bayar'] ?? 'Transfer Bank';
+if (!in_array($bayarTerpilih, METODE_BAYAR, true)) $bayarTerpilih = 'Transfer Bank';
+$ongkirTerpilih = BIAYA_KIRIM[$kirimTerpilih];
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -333,17 +358,17 @@ $infoBerikutnya = diskonBerikutnya((int) $totalHarga);
             <div class="row g-3">
               <div class="col-md-6">
                 <label class="form-label fw-semibold">Pilihan Cara Pengiriman</label>
-                <select name="metode_kirim" class="form-select">
-                  <option value="Reguler">Kurir Reguler (Estimasi 2-3 Hari) - Rp 15.000</option>
-                  <option value="Express">Kurir Express (Estimasi 1 Hari) - Rp 25.000</option>
+                <select name="metode_kirim" id="metodeKirim" class="form-select">
+                  <option value="Reguler" data-biaya="15000" <?= $kirimTerpilih === 'Reguler' ? 'selected' : '' ?>>Kurir Reguler (Estimasi 2-3 Hari) - Rp 15.000</option>
+                  <option value="Express" data-biaya="25000" <?= $kirimTerpilih === 'Express' ? 'selected' : '' ?>>Kurir Express (Estimasi 1 Hari) - Rp 25.000</option>
                 </select>
               </div>
               <div class="col-md-6">
                 <label class="form-label fw-semibold">Pilihan Cara Membayar</label>
                 <select name="metode_bayar" class="form-select">
-                  <option value="Transfer Bank">Transfer Bank (BCA / Mandiri / BNI)</option>
-                  <option value="E-Wallet">E-Wallet (Dana / OVO / GoPay)</option>
-                  <option value="COD">Bayar di Tempat (COD)</option>
+                  <option value="Transfer Bank" <?= $bayarTerpilih === 'Transfer Bank' ? 'selected' : '' ?>>Transfer Bank (BCA / Mandiri / BNI)</option>
+                  <option value="E-Wallet" <?= $bayarTerpilih === 'E-Wallet' ? 'selected' : '' ?>>E-Wallet (Dana / OVO / GoPay)</option>
+                  <option value="COD" <?= $bayarTerpilih === 'COD' ? 'selected' : '' ?>>Bayar di Tempat (COD)</option>
                 </select>
               </div>
             </div>
@@ -379,8 +404,8 @@ $infoBerikutnya = diskonBerikutnya((int) $totalHarga);
               </div>
               <?php endif; ?>
               <div class="d-flex justify-content-between mb-2">
-                <span class="text-muted">Estimasi Ongkir</span>
-                <span>Rp 15.000+</span>
+                <span class="text-muted">Ongkos Kirim (<span id="labelKurir"><?= htmlspecialchars($kirimTerpilih) ?></span>)</span>
+                <span id="ongkirText">Rp <?= number_format($ongkirTerpilih, 0, ',', '.') ?></span>
               </div>
               <?php if ($infoBerikutnya): ?>
               <div class="alert alert-info small py-2 mb-2">
@@ -390,7 +415,7 @@ $infoBerikutnya = diskonBerikutnya((int) $totalHarga);
               <hr>
               <div class="d-flex justify-content-between mb-3">
                 <span class="fw-bold">Total Biaya</span>
-                <span class="harga fs-5">Rp <?= number_format($totalHarga - $nominalDiskon + 15000, 0, ',', '.') ?> <small class="text-muted fs-6" style="font-size:10px !important;">(Min)</small></span>
+                <span class="harga fs-5" id="totalText">Rp <?= number_format($totalHarga - $nominalDiskon + $ongkirTerpilih, 0, ',', '.') ?></span>
               </div>
 
               <?php if ($is_login): ?>
@@ -432,6 +457,25 @@ Swal.fire({
 });
 </script>
 <?php endif; ?>
+<script>
+// Ongkir & total ikut berubah saat kurir dipilih
+(function () {
+    const pilih = document.getElementById('metodeKirim');
+    if (!pilih) return;
+    const subtotal = <?= (int) $totalHarga ?>;
+    const diskon   = <?= (int) $nominalDiskon ?>;
+    const rp = (n) => 'Rp ' + n.toLocaleString('id-ID');
+    function hitung() {
+        const opsi  = pilih.options[pilih.selectedIndex];
+        const biaya = parseInt(opsi.dataset.biaya, 10) || 0;
+        document.getElementById('labelKurir').textContent = opsi.value;
+        document.getElementById('ongkirText').textContent = rp(biaya);
+        document.getElementById('totalText').textContent  = rp(subtotal - diskon + biaya);
+    }
+    pilih.addEventListener('change', hitung);
+    hitung();
+})();
+</script>
 <script>
 document.querySelector('form[action="keranjang.php"]')?.addEventListener('submit', function (event) {
     const tombolCheckout = event.submitter;
