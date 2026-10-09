@@ -1,8 +1,6 @@
 <?php
 session_start();
 include "koneksi.php";
-$notifikasi = $_SESSION['flash_sweetalert'] ?? null;
-unset($_SESSION['flash_sweetalert']);
 
 // Harus login
 if (!isset($_SESSION['user_id'])) {
@@ -11,25 +9,47 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $id_user      = (int) $_SESSION['user_id'];
+$role         = $_SESSION['user_role'] ?? 'pelanggan';
+
+// Tujuan tombol kembali: admin -> dashboard, pelanggan -> profile
+$linkKembali  = ($role === 'admin') ? 'dashboard.php?page=transaksi' : 'profile.php';
+$labelKembali = ($role === 'admin') ? 'Kembali ke Dashboard' : 'Kembali ke Profil';
 $id_transaksi = isset($_GET['id']) ? (int) $_GET['id'] : 0;
 
-// Ambil data transaksi + pastikan milik user yang login
-$stmt = mysqli_prepare(
-    $koneksi,
-    "SELECT t.id_transaksi, t.tanggal, t.total_harga,
-            u.nama, u.email, u.hp, u.alamat
-     FROM tb_transaksi t
-     JOIN tb_user u ON t.id_pelanggan = u.id
-     WHERE t.id_transaksi = ? AND t.id_pelanggan = ?"
-);
-mysqli_stmt_bind_param($stmt, "ii", $id_transaksi, $id_user);
+// Ambil data transaksi.
+// - Admin: boleh lihat invoice transaksi SIAPA SAJA.
+// - Pelanggan: hanya boleh lihat invoice miliknya sendiri.
+if ($role === 'admin') {
+    $stmt = mysqli_prepare(
+        $koneksi,
+        "SELECT t.id_transaksi, t.tanggal, t.total_harga,
+                u.nama, u.email, u.hp, u.alamat
+         FROM tb_transaksi t
+         JOIN tb_user u ON t.id_pelanggan = u.id
+         WHERE t.id_transaksi = ?"
+    );
+    mysqli_stmt_bind_param($stmt, "i", $id_transaksi);
+} else {
+    $stmt = mysqli_prepare(
+        $koneksi,
+        "SELECT t.id_transaksi, t.tanggal, t.total_harga,
+                u.nama, u.email, u.hp, u.alamat
+         FROM tb_transaksi t
+         JOIN tb_user u ON t.id_pelanggan = u.id
+         WHERE t.id_transaksi = ? AND t.id_pelanggan = ?"
+    );
+    mysqli_stmt_bind_param($stmt, "ii", $id_transaksi, $id_user);
+}
 mysqli_stmt_execute($stmt);
 $trx = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
 
 if (!$trx) {
-    die("<div style='font-family:sans-serif;padding:40px;text-align:center'>
-         <h3>Transaksi tidak ditemukan</h3>
-         <a href='profile.php'>Kembali ke Profil</a></div>");
+    die("<div style='font-family:sans-serif;padding:60px 20px;text-align:center'>
+         <h1 style='font-size:3rem;margin-bottom:0;'>🧾❌</h1>
+         <h3>Invoice Tidak Ditemukan</h3>
+         <p style='color:#6c757d;'>Transaksi dengan nomor <strong>INV-" . str_pad($id_transaksi, 5, "0", STR_PAD_LEFT) . "</strong> tidak ditemukan, atau transaksi ini bukan milik akun Anda.</p>
+         <a href='$linkKembali' style='display:inline-block;margin-top:15px;padding:10px 24px;background:#ff6f3c;color:#fff;text-decoration:none;border-radius:6px;'>&larr; Kembali</a>
+         </div>");
 }
 
 // Ambil detail produk transaksi
@@ -134,15 +154,9 @@ while ($row = mysqli_fetch_assoc($res)) {
 
   <div class="no-print d-flex gap-2">
     <button onclick="window.print()" class="btn btn-dark"><i class="bi bi-printer"></i> Cetak Invoice</button>
-    <a href="profile.php" class="btn btn-outline-secondary">Kembali ke Profil</a>
+    <a href="<?= $linkKembali ?>" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> <?= $labelKembali ?></a>
   </div>
 </div>
 
-<?php if (is_array($notifikasi)): ?>
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-<script>
-Swal.fire(<?= json_encode($notifikasi, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>);
-</script>
-<?php endif; ?>
 </body>
 </html>
