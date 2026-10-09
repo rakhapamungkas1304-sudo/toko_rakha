@@ -24,27 +24,42 @@ $jumlah_keranjang = array_sum($_SESSION['keranjang']);
 // PROSES UPDATE PROFILE
 // ==============================
 if (isset($_POST['simpan_profile'])) {
-    $nama = trim($_POST['nama']);
-    $email = trim($_POST['email']);
-    $hp = trim($_POST['hp']);
-    $alamat = trim($_POST['alamat'] ?? '');
+    $nama     = trim($_POST['nama']);
+    $username = trim($_POST['username'] ?? '');
+    $email    = trim($_POST['email']);
+    $hp       = trim($_POST['hp']);
+    $alamat   = trim($_POST['alamat']);
 
-    if ($nama === '' || $email === '') {
-        $pesan = "Nama dan email tidak boleh kosong.";
+    if ($nama === '' || $email === '' || $username === '') {
+        $pesan = "Nama, username, dan email tidak boleh kosong.";
+        $tipePesan = "danger";
+    } elseif (!preg_match('/^[A-Za-z0-9_.]{3,30}$/', $username)) {
+        $pesan = "Username 3-30 karakter, hanya huruf, angka, titik, dan underscore.";
         $tipePesan = "danger";
     } else {
-        $stmt = mysqli_prepare(
-            $koneksi,
-            "UPDATE tb_user SET nama = ?, email = ?, hp = ?, alamat = ? WHERE id = ?"
-        );
-        mysqli_stmt_bind_param($stmt, "ssssi", $nama, $email, $hp, $alamat, $id_user);
+        // Pastikan username belum dipakai user lain
+        $cek = mysqli_prepare($koneksi, "SELECT id FROM tb_user WHERE username = ? AND id != ?");
+        mysqli_stmt_bind_param($cek, "si", $username, $id_user);
+        mysqli_stmt_execute($cek);
+        $dipakai = mysqli_fetch_assoc(mysqli_stmt_get_result($cek));
 
-        if (mysqli_stmt_execute($stmt)) {
-            $_SESSION['user_nama'] = $nama; // perbarui nama di navbar
-            $pesan = "Profil berhasil diperbarui.";
-        } else {
-            $pesan = "Gagal memperbarui profil.";
+        if ($dipakai) {
+            $pesan = "Username \"" . $username . "\" sudah dipakai pengguna lain.";
             $tipePesan = "danger";
+        } else {
+            $stmt = mysqli_prepare(
+                $koneksi,
+                "UPDATE tb_user SET nama = ?, username = ?, email = ?, hp = ?, alamat = ? WHERE id = ?"
+            );
+            mysqli_stmt_bind_param($stmt, "sssssi", $nama, $username, $email, $hp, $alamat, $id_user);
+
+            if (mysqli_stmt_execute($stmt)) {
+                $_SESSION['user_nama'] = $nama; // perbarui nama di navbar
+                $pesan = "Profil berhasil diperbarui.";
+            } else {
+                $pesan = "Gagal memperbarui profil.";
+                $tipePesan = "danger";
+            }
         }
     }
 }
@@ -98,7 +113,7 @@ if (!$user) {
 }
 
 // ==============================
-// AMBIL RIWAYAT TRANSAKSI BESERTA DETAIL ITEM YANG DIPESAN
+// AMBIL RIWAYAT TRANSAKSI
 // ==============================
 $riwayat = [];
 $stmt = mysqli_prepare(
@@ -113,24 +128,6 @@ mysqli_stmt_bind_param($stmt, "i", $id_user);
 mysqli_stmt_execute($stmt);
 $res = mysqli_stmt_get_result($stmt);
 while ($row = mysqli_fetch_assoc($res)) {
-    // Ambil detail produk yang dipesan pada transaksi ini
-    $id_trx = $row['id_transaksi'];
-    $stmt_detail = mysqli_prepare(
-        $koneksi,
-        "SELECT p.nama, d.jumlah, p.harga 
-         FROM tb_detail d 
-         JOIN tb_produk p ON d.id_produk = p.id 
-         WHERE d.id_transaksi = ?"
-    );
-    mysqli_stmt_bind_param($stmt_detail, "i", $id_trx);
-    mysqli_stmt_execute($stmt_detail);
-    $res_detail = mysqli_stmt_get_result($stmt_detail);
-    
-    $row['items_pesanan'] = [];
-    while ($item = mysqli_fetch_assoc($res_detail)) {
-        $row['items_pesanan'][] = $item;
-    }
-
     $riwayat[] = $row;
 }
 
@@ -139,7 +136,6 @@ $totalBelanja = 0;
 foreach ($riwayat as $r) {
     $totalBelanja += $r['total_harga'];
 }
-$nama_user = $user['nama'];
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -306,7 +302,7 @@ $nama_user = $user['nama'];
                             </li>
                             <li class="nav-item">
                                 <button class="nav-link" data-bs-toggle="pill" data-bs-target="#tab-riwayat">
-                                    <i class="bi bi-receipt me-1"></i> Riwayat Transaksi & Pesanan
+                                    <i class="bi bi-receipt me-1"></i> Riwayat Transaksi
                                 </button>
                             </li>
                             <li class="nav-item">
@@ -328,9 +324,10 @@ $nama_user = $user['nama'];
                                         </div>
                                         <div class="col-md-6">
                                             <label class="form-label">Username</label>
-                                            <input type="text" class="form-control"
-                                                value="<?= htmlspecialchars($user['username'] ?? '') ?>" disabled>
-                                            <small class="text-muted">Username tidak dapat diubah.</small>
+                                            <input type="text" name="username" class="form-control"
+                                                value="<?= htmlspecialchars($user['username'] ?? '') ?>"
+                                                required pattern="[A-Za-z0-9_.]{3,30}">
+                                            <small class="text-muted">3-30 karakter: huruf, angka, titik, underscore. Dipakai untuk login.</small>
                                         </div>
                                         <div class="col-md-6">
                                             <label class="form-label">Email</label>
@@ -356,7 +353,7 @@ $nama_user = $user['nama'];
                                 </form>
                             </div>
 
-                            <!-- TAB RIWAYAT TRANSAKSI & PESANAN -->
+                            <!-- TAB RIWAYAT TRANSAKSI -->
                             <div class="tab-pane fade" id="tab-riwayat">
                                 <?php if (count($riwayat) === 0): ?>
                                     <div class="text-center py-5">
@@ -370,7 +367,7 @@ $nama_user = $user['nama'];
                                             <thead class="table-light">
                                                 <tr>
                                                     <th>No. Invoice</th>
-                                                    <th>Tanggal & Produk Pesanan</th>
+                                                    <th>Tanggal</th>
                                                     <th class="text-center">Jumlah Item</th>
                                                     <th class="text-end">Total</th>
                                                     <th class="text-center">Aksi</th>
@@ -379,29 +376,14 @@ $nama_user = $user['nama'];
                                             <tbody>
                                                 <?php foreach ($riwayat as $trx): ?>
                                                     <tr>
-                                                        <td class="fw-semibold align-top">
-                                                            INV-<?= str_pad($trx['id_transaksi'], 5, "0", STR_PAD_LEFT) ?>
-                                                        </td>
-                                                        <td class="align-top">
-                                                            <div><?= date("d M Y", strtotime($trx['tanggal'])) ?></div>
-                                                            <div class="mt-2">
-                                                                <small class="text-muted fw-semibold">Produk yang dipesan:</small>
-                                                                <ul class="mb-0 ps-3 small text-secondary">
-                                                                    <?php if (!empty($trx['items_pesanan'])): ?>
-                                                                        <?php foreach ($trx['items_pesanan'] as $item): ?>
-                                                                            <li><?= htmlspecialchars($item['nama']) ?> (<?= (int)$item['jumlah'] ?>x)</li>
-                                                                        <?php endforeach; ?>
-                                                                    <?php else: ?>
-                                                                        <li>Tidak ada detail produk</li>
-                                                                    <?php endif; ?>
-                                                                </ul>
-                                                            </div>
-                                                        </td>
-                                                        <td class="text-center align-top"><?= (int) $trx['total_item'] ?> barang</td>
-                                                        <td class="text-end fw-semibold align-top">Rp
+                                                        <td class="fw-semibold">
+                                                            INV-<?= str_pad($trx['id_transaksi'], 5, "0", STR_PAD_LEFT) ?></td>
+                                                        <td><?= date("d M Y", strtotime($trx['tanggal'])) ?></td>
+                                                        <td class="text-center"><?= (int) $trx['total_item'] ?> barang</td>
+                                                        <td class="text-end fw-semibold">Rp
                                                             <?= number_format($trx['total_harga'], 0, ',', '.') ?>
                                                         </td>
-                                                        <td class="text-center align-top">
+                                                        <td class="text-center">
                                                             <a href="invoice.php?id=<?= $trx['id_transaksi'] ?>" target="_blank"
                                                                 class="btn btn-sm btn-outline-dark">
                                                                 <i class="bi bi-printer"></i> Invoice
